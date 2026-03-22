@@ -48,9 +48,18 @@ export default function SessionPage() {
 
       setLocalStream(stream);
 
-      const peer = new RTCPeerConnection({
-        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-      });
+     const peer = new RTCPeerConnection({
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+
+    // ✅ ADD THIS (FREE PUBLIC TURN - TEST ONLY)
+    {
+      urls: "turn:openrelay.metered.ca:80",
+      username: "openrelayproject",
+      credential: "openrelayproject",
+    },
+  ],
+});
 
       peerRef.current = peer;
 
