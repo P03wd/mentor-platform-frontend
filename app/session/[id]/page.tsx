@@ -27,7 +27,7 @@ export default function SessionPage() {
 
   useEffect(() => {
     // 🔌 CONNECT SOCKET
-    socketRef.current = io("http://localhost:5000");
+    socketRef.current = io("https://mentor-platform-backend.onrender.com/");
 
     const socket = socketRef.current;
 
