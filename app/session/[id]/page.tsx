@@ -20,16 +20,21 @@ export default function SessionPage() {
 
   const [isCaller, setIsCaller] = useState(false);
 
-  // RANDOM CALLER DECISION (RUN ONCE)
   useEffect(() => {
-    setIsCaller(Math.random() > 0.5);
-  }, []);
-
-  useEffect(() => {
-    // 🔌 CONNECT SOCKET
-    socketRef.current = io("https://mentor-platform-backend.onrender.com/");
+    // 🔌 CONNECT SOCKET (FIXED)
+    socketRef.current = io("https://mentor-platform-backend.onrender.com", {
+      transports: ["websocket"],
+    });
 
     const socket = socketRef.current;
+
+    socket.emit("join-session", id);
+
+    // ✅ GET ROLE FROM SERVER
+    socket.on("role", (role: string) => {
+      console.log("My role:", role);
+      setIsCaller(role === "caller");
+    });
 
     // 🧹 CLEAN OLD PEER
     if (peerRef.current) {
@@ -37,9 +42,6 @@ export default function SessionPage() {
       peerRef.current = null;
     }
 
-    socket.emit("join-session", id);
-
-    // 📹 START MEDIA + PEER
     const start = async () => {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: true,
@@ -48,18 +50,16 @@ export default function SessionPage() {
 
       setLocalStream(stream);
 
-     const peer = new RTCPeerConnection({
-  iceServers: [
-    { urls: "stun:stun.l.google.com:19302" },
-
-    // ✅ ADD THIS (FREE PUBLIC TURN - TEST ONLY)
-    {
-      urls: "turn:openrelay.metered.ca:80",
-      username: "openrelayproject",
-      credential: "openrelayproject",
-    },
-  ],
-});
+      const peer = new RTCPeerConnection({
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          {
+            urls: "turn:openrelay.metered.ca:80",
+            username: "openrelayproject",
+            credential: "openrelayproject",
+          },
+        ],
+      });
 
       peerRef.current = peer;
 
@@ -83,21 +83,24 @@ export default function SessionPage() {
         }
       };
 
-      // 🔥 CREATE OFFER (ONLY CALLER)
-      if (isCaller) {
-        const offer = await peer.createOffer();
-        await peer.setLocalDescription(offer);
+      // 🔥 WAIT UNTIL BOTH USERS READY
+      socket.on("ready", async () => {
+        if (!peerRef.current) return;
+        if (!isCaller) return;
+
+        const offer = await peerRef.current.createOffer();
+        await peerRef.current.setLocalDescription(offer);
 
         socket.emit("offer", {
           sessionId: id,
           offer,
         });
-      }
+      });
     };
 
     start();
 
-    // 📩 RECEIVE OFFER
+    // 📩 OFFER
     socket.on("offer", async (offer) => {
       const peer = peerRef.current;
       if (!peer) return;
@@ -113,7 +116,7 @@ export default function SessionPage() {
       });
     });
 
-    // 📩 RECEIVE ANSWER
+    // 📩 ANSWER
     socket.on("answer", async (answer) => {
       await peerRef.current?.setRemoteDescription(answer);
     });
@@ -166,7 +169,7 @@ export default function SessionPage() {
 
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6">
-
+      {/* HEADER */}
       <h1 className="text-3xl font-bold mb-6">
         🚀 Session {id}
       </h1>
@@ -200,7 +203,7 @@ export default function SessionPage() {
         </div>
       </div>
 
-      {/* CODE */}
+      {/* CODE EDITOR */}
       <div className="mb-6">
         <h2 className="text-xl mb-2">💻 Code Editor</h2>
         <div className="rounded-lg overflow-hidden border border-gray-700">
@@ -219,7 +222,9 @@ export default function SessionPage() {
 
         <div className="h-40 overflow-y-auto mb-3 space-y-1">
           {messages.map((msg, index) => (
-            <p key={index}>{msg}</p>
+            <p key={index} className="text-sm">
+              {msg}
+            </p>
           ))}
         </div>
 
@@ -239,7 +244,6 @@ export default function SessionPage() {
           </button>
         </div>
       </div>
-
     </div>
   );
 }
