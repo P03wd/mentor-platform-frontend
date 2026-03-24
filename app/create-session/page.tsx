@@ -2,70 +2,127 @@
 
 import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
+import { v4 as uuidv4 } from "uuid";
 
 export default function CreateSession() {
   const router = useRouter();
 
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+
   const createSession = async () => {
-    console.log("Clicked create session");
+    if (loading) return; // 🔒 prevent double click
 
-    const { data: userData, error: userError } =
-      await supabase.auth.getUser();
+    try {
+      setLoading(true);
+      setMessage("");
 
-    console.log("User:", userData, userError);
+      // 🔐 GET USER
+      const { data: userData, error: userError } =
+        await supabase.auth.getUser();
 
-    if (!userData?.user) {
-      alert("Login first");
-      return;
-    }
+      if (userError || !userData?.user) {
+        setMessage("❌ Please login first");
+        return;
+      }
 
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", userData.user.id)
-      .single();
+      const userId = userData.user.id;
 
-    console.log("Profile:", profile, profileError);
+      // 👤 CHECK PROFILE
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", userId)
+        .single();
 
-    if (!profile) {
-      alert("Profile not found");
-      return;
-    }
+      if (profileError || !profile) {
+        setMessage("❌ Profile not found");
+        return;
+      }
 
-    if (profile.role !== "mentor") {
-      alert("Only mentors can create sessions");
-      return;
-    }
+      // 🚫 ROLE CHECK
+      if (profile.role !== "mentor") {
+        setMessage("❌ Only mentors can create sessions");
+        return;
+      }
 
-    const { data, error } = await supabase
-      .from("sessions")
-      .insert([
-        {
-          mentor_id: userData.user.id,
-        },
-      ])
-      .select()
-      .single();
+      // 🆔 GENERATE SESSION ID
+      const sessionId = uuidv4();
 
-    console.log("Session:", data, error);
+      // 🆕 CREATE SESSION
+      const { data, error } = await supabase
+        .from("sessions")
+        .insert([
+          {
+            //  id: sessionId,// ✅ custom UUID
+            mentor_id: userId,
+            // status: "waiting", // optional but useful
+            // created_at: new Date().toISOString(),
+          },
+        ])
+        .select()
+        .single();
 
-    if (error) {
-      alert("Error creating session");
-      return;
-    }
+      if (error || !data) {
+        console.error("Insert error:", error);
+        setMessage("❌ Failed to create session");
+        return;
+      }
 
-    if (data) {
-      router.push(`/session/${data.id}`);
+      // ✅ SUCCESS
+      setMessage(`✅ Session created! ID: ${data.id}`);
+
+      // 🚀 REDIRECT
+      setTimeout(() => {
+        router.push(`/session/${sessionId}`);
+      }, 800);
+    } catch (err) {
+      console.error("Unexpected error:", err);
+      setMessage("❌ Something went wrong");
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
-    <div style={{ padding: "20px" }}>
-      <h1>Create Session</h1>
+    <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center justify-center gap-6">
+      
+      {/* TITLE */}
+      <h1 className="text-3xl font-bold">
+        🚀 Create Session
+      </h1>
 
-      <button onClick={createSession}>
-        Create Session
+      {/* BUTTON */}
+      <button
+        onClick={createSession}
+        disabled={loading}
+        className={`px-6 py-3 rounded-xl transition ${
+          loading
+            ? "bg-gray-500 cursor-not-allowed"
+            : "bg-green-500 hover:bg-green-600"
+        }`}
+      >
+        {loading ? "Creating..." : "Create Session"}
       </button>
+
+      {/* MESSAGE */}
+    {message && (
+  <div className="flex flex-col items-center gap-2">
+    <p className="text-sm text-center">{message}</p>
+
+    {/* ✅ COPY BUTTON */}
+    <button
+      onClick={() => {
+        const id = message.split("ID: ")[1];
+        if (id) navigator.clipboard.writeText(id);
+      }}
+      className="bg-gray-700 px-3 py-1 rounded hover:bg-gray-600"
+    >
+      Copy ID
+    </button>
+  </div>
+)}
     </div>
   );
 }

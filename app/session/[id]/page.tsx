@@ -18,110 +18,64 @@ export default function SessionPage() {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
 
-  const [isCaller, setIsCaller] = useState(false);
+  const [status, setStatus] = useState("Connecting...");
 
   useEffect(() => {
-    // 🔌 CONNECT SOCKET (FIXED)
-    socketRef.current = io("https://mentor-platform-backend.onrender.com", {
+    if (!id) return;
+
+    const socket = io("https://mentor-platform-backend.onrender.com", {
       transports: ["websocket"],
     });
 
-    const socket = socketRef.current;
+    socketRef.current = socket;
+
+    let caller = false; // 🔥 IMPORTANT
 
     socket.emit("join-session", id);
 
-    // ✅ GET ROLE FROM SERVER
+    // 🎭 ROLE
     socket.on("role", (role: string) => {
-      console.log("My role:", role);
-      setIsCaller(role === "caller");
+      caller = role === "caller";
+      console.log("Role:", role);
     });
 
-    // 🧹 CLEAN OLD PEER
-    if (peerRef.current) {
-      peerRef.current.close();
-      peerRef.current = null;
-    }
+    // 🚀 READY → Caller creates offer
+    socket.on("ready", async () => {
+      if (!peerRef.current) return;
+      if (!caller) return;
 
-    const start = async () => {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true,
-      });
+      console.log("Creating offer...");
 
-      setLocalStream(stream);
+      const offer = await peerRef.current.createOffer();
+      await peerRef.current.setLocalDescription(offer);
 
-      const peer = new RTCPeerConnection({
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          {
-            urls: "turn:openrelay.metered.ca:80",
-            username: "openrelayproject",
-            credential: "openrelayproject",
-          },
-        ],
-      });
-
-      peerRef.current = peer;
-
-      // ADD TRACKS
-      stream.getTracks().forEach((track) => {
-        peer.addTrack(track, stream);
-      });
-
-      // RECEIVE VIDEO
-      peer.ontrack = (event) => {
-        setRemoteStream(event.streams[0]);
-      };
-
-      // ICE
-      peer.onicecandidate = (event) => {
-        if (event.candidate) {
-          socket.emit("ice-candidate", {
-            sessionId: id,
-            candidate: event.candidate,
-          });
-        }
-      };
-
-      // 🔥 WAIT UNTIL BOTH USERS READY
-      socket.on("ready", async () => {
-        if (!peerRef.current) return;
-        if (!isCaller) return;
-
-        const offer = await peerRef.current.createOffer();
-        await peerRef.current.setLocalDescription(offer);
-
-        socket.emit("offer", {
-          sessionId: id,
-          offer,
-        });
-      });
-    };
-
-    start();
+      socket.emit("offer", { sessionId: id, offer });
+    });
 
     // 📩 OFFER
     socket.on("offer", async (offer) => {
       const peer = peerRef.current;
       if (!peer) return;
 
+      console.log("Received offer");
+
       await peer.setRemoteDescription(offer);
 
       const answer = await peer.createAnswer();
       await peer.setLocalDescription(answer);
 
-      socket.emit("answer", {
-        sessionId: id,
-        answer,
-      });
+      socket.emit("answer", { sessionId: id, answer });
     });
 
     // 📩 ANSWER
     socket.on("answer", async (answer) => {
+      console.log("Received answer");
+
       await peerRef.current?.setRemoteDescription(answer);
+      setStatus("Connected ✅");
     });
 
-    // 📩 ICE
+    // ❄ ICE
     socket.on("ice-candidate", async (candidate) => {
       await peerRef.current?.addIceCandidate(candidate);
     });
@@ -136,16 +90,72 @@ export default function SessionPage() {
       setCode(newCode);
     });
 
+    // 🎥 START MEDIA + PEER
+    const start = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: true,
+        });
+
+        setLocalStream(stream);
+
+        const peer = new RTCPeerConnection({
+          iceServers: [
+            { urls: "stun:stun.l.google.com:19302" },
+            {
+              urls: "turn:openrelay.metered.ca:80",
+              username: "openrelayproject",
+              credential: "openrelayproject",
+            },
+          ],
+        });
+
+        peerRef.current = peer;
+
+        // 🎯 ADD TRACKS
+        stream.getTracks().forEach((track) => {
+          peer.addTrack(track, stream);
+        });
+
+        // 🎥 RECEIVE REMOTE VIDEO
+        peer.ontrack = (event) => {
+          console.log("Remote stream received");
+          setRemoteStream(event.streams[0]);
+        };
+
+        // ❄ ICE
+        peer.onicecandidate = (event) => {
+          if (event.candidate) {
+            socket.emit("ice-candidate", {
+              sessionId: id,
+              candidate: event.candidate,
+            });
+          }
+        };
+
+        setStatus("Waiting for peer...");
+      } catch (err) {
+        console.error(err);
+        setStatus("❌ Camera/Mic error");
+      }
+    };
+
+    start();
+
     // 🧹 CLEANUP
     return () => {
       socket.disconnect();
       peerRef.current?.close();
+
+      // stop camera
+      localStream?.getTracks().forEach((track) => track.stop());
     };
-  }, [id, isCaller]);
+  }, [id]);
 
   // 💬 SEND MESSAGE
   const sendMessage = () => {
-    if (!message) return;
+    if (!message.trim()) return;
 
     socketRef.current?.emit("send-message", {
       sessionId: id,
@@ -169,68 +179,55 @@ export default function SessionPage() {
 
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6">
-      {/* HEADER */}
-      <h1 className="text-3xl font-bold mb-6">
+      <h1 className="text-3xl font-bold mb-2">
         🚀 Session {id}
       </h1>
 
-      {/* VIDEO */}
+      <p className="text-sm text-gray-400 mb-6">{status}</p>
+
+      {/* 🎥 VIDEO */}
       <div className="flex gap-6 mb-6">
-        <div>
-          <p className="text-sm text-gray-400 mb-2">You</p>
-          <video
-            autoPlay
-            playsInline
-            muted
-            ref={(video) => {
-              if (video && localStream) video.srcObject = localStream;
-            }}
-            className="w-64 rounded-xl border border-gray-700"
-          />
-        </div>
+        <video
+          autoPlay
+          playsInline
+          muted
+          ref={(video) => {
+            if (video && localStream) video.srcObject = localStream;
+          }}
+          className="w-64 rounded-xl border border-gray-700"
+        />
 
-        <div>
-          <p className="text-sm text-gray-400 mb-2">Peer</p>
-          <video
-            key="remote"
-            autoPlay
-            playsInline
-            ref={(video) => {
-              if (video && remoteStream) video.srcObject = remoteStream;
-            }}
-            className="w-64 rounded-xl border border-gray-700"
-          />
-        </div>
+        <video
+          autoPlay
+          playsInline
+          ref={(video) => {
+            if (video && remoteStream) video.srcObject = remoteStream;
+          }}
+          className="w-64 rounded-xl border border-gray-700"
+        />
       </div>
 
-      {/* CODE EDITOR */}
+      {/* 💻 CODE */}
       <div className="mb-6">
-        <h2 className="text-xl mb-2">💻 Code Editor</h2>
-        <div className="rounded-lg overflow-hidden border border-gray-700">
-          <Editor
-            height="300px"
-            defaultLanguage="javascript"
-            value={code}
-            onChange={handleCodeChange}
-          />
-        </div>
+        <Editor
+          height="300px"
+          defaultLanguage="javascript"
+          value={code}
+          onChange={handleCodeChange}
+        />
       </div>
 
-      {/* CHAT */}
-      <div className="bg-gray-800 p-4 rounded-xl border border-gray-700">
-        <h2 className="text-xl mb-3">💬 Chat</h2>
-
-        <div className="h-40 overflow-y-auto mb-3 space-y-1">
-          {messages.map((msg, index) => (
-            <p key={index} className="text-sm">
-              {msg}
-            </p>
+      {/* 💬 CHAT */}
+      <div className="bg-gray-800 p-4 rounded-xl">
+        <div className="h-40 overflow-y-auto mb-3">
+          {messages.map((msg, i) => (
+            <p key={i}>{msg}</p>
           ))}
         </div>
 
         <div className="flex gap-2">
           <input
-            className="flex-1 p-2 rounded bg-gray-700 outline-none"
+            className="flex-1 p-2 bg-gray-700"
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             placeholder="Type message..."
@@ -238,7 +235,7 @@ export default function SessionPage() {
 
           <button
             onClick={sendMessage}
-            className="bg-blue-500 px-4 rounded hover:bg-blue-600"
+            className="bg-blue-500 px-4 rounded"
           >
             Send
           </button>
