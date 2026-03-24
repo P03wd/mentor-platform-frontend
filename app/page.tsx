@@ -5,25 +5,35 @@ import { supabase } from "../lib/supabase";
 import Link from "next/link";
 
 export default function Home() {
-
   useEffect(() => {
     const createProfile = async () => {
-      const { data, error } = await supabase.auth.getUser();
+      const {
+        data: { user },
+        error,
+      } = await supabase.auth.getUser();
 
-      if (!data.user) {
+      if (error) {
+        console.error("Auth error:", error.message);
+        return;
+      }
+
+      if (!user) {
         console.log("No user logged in");
         return;
       }
 
-      console.log("User found:", data.user.id);
+      console.log("User found:", user.id);
 
       const { error: profileError } = await supabase
         .from("profiles")
-        .upsert({
-          id: data.user.id,
-          email: data.user.email,
-          role: "mentor", // default role
-        });
+        .upsert(
+          {
+            id: user.id,
+            email: user.email,
+            role: "mentor",
+          },
+          { onConflict: "id" } // ✅ important
+        );
 
       if (profileError) {
         console.log("Profile error:", profileError.message);
@@ -36,16 +46,18 @@ export default function Home() {
   }, []);
 
   return (
-    <div style={{ padding: "20px" }}>
-      <h1>Mentor Platform 🚀</h1>
+    <div className="p-6">
+      <h1 className="text-2xl font-bold">Mentor Platform 🚀</h1>
 
-      <br />
+      <div className="mt-4 flex flex-col gap-2">
+        <Link href="/login" className="text-blue-400 underline">
+          Login
+        </Link>
 
-      <Link href="/login">Login</Link>
-
-      <br /><br />
-
-      <Link href="/create-session">Create Session</Link>
+        <Link href="/create-session" className="text-blue-400 underline">
+          Create Session
+        </Link>
+      </div>
     </div>
   );
 }
